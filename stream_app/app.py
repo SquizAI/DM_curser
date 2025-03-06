@@ -48,7 +48,7 @@ from utils.insights import (
 from utils.reporting import generate_pdf_report
 from utils.performance import (
     profile_memory_usage, time_function, convert_pandas_to_polars,
-    convert_polars_to_pandas, optimize_pandas_dtypes
+    convert_polars_to_pandas, optimize_pandas_dtypes, optimize_streamlit_performance
 )
 
 # Add a custom theme and styling for better UI
