@@ -1,0 +1,8 @@
+ # Ignore files and directories for deployment
+association-rule-mining-app.zip
+Exercises (1).ipynb
+.ipynb_checkpoints/
+.git/
+.devcontainer/
+data/
+.venv/

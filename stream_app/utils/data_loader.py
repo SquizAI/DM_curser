@@ -4,8 +4,16 @@ import numpy as np
 from typing import Tuple, Optional, Union, List, Set
 import streamlit as st
 from datetime import datetime
+import sys
+import os
+import gc
+
+# Add parent directory to path to allow importing from render_optimization
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from render_optimization import memory_optimize, optimize_dataframe
 
 @st.cache_data
+@memory_optimize
 def load_and_prep_data(file_path: Optional[str] = None, 
                        file = None,
                        dataframe: Optional[pd.DataFrame] = None) -> Tuple[pd.DataFrame, Set]:
@@ -31,61 +39,136 @@ def load_and_prep_data(file_path: Optional[str] = None,
                     if file.name.endswith('.csv'):
                         df = pd.read_csv(file)
                     elif file.name.endswith(('.xlsx', '.xls')):
-                        # Use explicit dtypes to avoid 'int' object decoding error
-                        df = pd.read_excel(
-                            file, 
-                            dtype={
-                                'InvoiceNo': str,
-                                'StockCode': str,
-                                'CustomerID': str
-                            },
-                            engine='openpyxl'
-                        )
+                        # For Excel files, use chunk reading for better memory usage
+                        try:
+                            # Instead of loading entire file at once, process in batches
+                            excel_file = pd.ExcelFile(file, engine='openpyxl')
+                            sheet_name = excel_file.sheet_names[0]  # Get first sheet
+                            
+                            # Get sheet dimensions to determine chunking
+                            xls = excel_file.book.worksheets[0]
+                            row_count = xls.max_row
+                            
+                            # Process in chunks of 5000 rows
+                            chunk_size = 5000
+                            dfs = []
+                            
+                            for i in range(0, row_count, chunk_size):
+                                end_row = min(i + chunk_size, row_count)
+                                print(f"Reading Excel rows {i} to {end_row} of {row_count}")
+                                
+                                # Read chunk of Excel file
+                                chunk_df = pd.read_excel(
+                                    excel_file, 
+                                    sheet_name=sheet_name,
+                                    skiprows=i if i > 0 else None,
+                                    nrows=chunk_size,
+                                    dtype={
+                                        'InvoiceNo': str,
+                                        'StockCode': str,
+                                        'CustomerID': str
+                                    }
+                                )
+                                
+                                # Optimize each chunk
+                                chunk_df = optimize_dataframe(chunk_df)
+                                dfs.append(chunk_df)
+                                
+                                # Force garbage collection after each chunk
+                                gc.collect()
+                            
+                            # Combine all chunks
+                            df = pd.concat(dfs, ignore_index=True)
+                            
+                            # Close Excel file to free resources
+                            excel_file.close()
+                            
+                        except Exception as e:
+                            st.warning(f"Chunk reading failed, trying standard method: {e}")
+                            # Fall back to standard method
+                            df = pd.read_excel(
+                                file, 
+                                dtype={
+                                    'InvoiceNo': str,
+                                    'StockCode': str,
+                                    'CustomerID': str
+                                },
+                                engine='openpyxl'
+                            )
                     else:
                         st.error(f"Unsupported file format: {file.name}")
                         return pd.DataFrame(), set()
                 else:
                     # If file type can't be determined, try Excel first, then CSV
                     try:
-                        df = pd.read_excel(
-                            file, 
+                        df = pd.read_excel(file, dtype={'InvoiceNo': str, 'StockCode': str, 'CustomerID': str})
+                    except:
+                        df = pd.read_csv(file)
+            except Exception as e:
+                st.error(f"Error loading file: {e}")
+                return pd.DataFrame(), set()
+        elif file_path is not None:
+            # Load from file path
+            if file_path.endswith('.csv'):
+                df = pd.read_csv(file_path)
+            elif file_path.endswith(('.xlsx', '.xls')):
+                # Use same chunking approach for file paths
+                try:
+                    excel_file = pd.ExcelFile(file_path, engine='openpyxl')
+                    sheet_name = excel_file.sheet_names[0]
+                    
+                    xls = excel_file.book.worksheets[0]
+                    row_count = xls.max_row
+                    
+                    chunk_size = 5000
+                    dfs = []
+                    
+                    for i in range(0, row_count, chunk_size):
+                        end_row = min(i + chunk_size, row_count)
+                        print(f"Reading Excel rows {i} to {end_row} of {row_count}")
+                        
+                        chunk_df = pd.read_excel(
+                            excel_file, 
+                            sheet_name=sheet_name,
+                            skiprows=i if i > 0 else None,
+                            nrows=chunk_size,
                             dtype={
                                 'InvoiceNo': str,
                                 'StockCode': str,
                                 'CustomerID': str
-                            },
-                            engine='openpyxl'
+                            }
                         )
-                    except Exception as e:
-                        st.warning(f"Could not read as Excel, trying CSV: {str(e)}")
-                        df = pd.read_csv(file)
-            except Exception as e:
-                st.error(f"Error reading file: {str(e)}")
-                return pd.DataFrame(), set()
-        elif file_path is not None:
-            try:
-                if file_path.endswith('.csv'):
-                    df = pd.read_csv(file_path)
-                elif file_path.endswith(('.xlsx', '.xls')):
-                    # Use explicit dtypes to avoid 'int' object decoding error
+                        
+                        chunk_df = optimize_dataframe(chunk_df)
+                        dfs.append(chunk_df)
+                        gc.collect()
+                    
+                    df = pd.concat(dfs, ignore_index=True)
+                    excel_file.close()
+                    
+                except Exception as e:
+                    st.warning(f"Chunk reading failed, trying standard method: {e}")
                     df = pd.read_excel(
-                        file_path,
+                        file_path, 
                         dtype={
                             'InvoiceNo': str,
-                            'StockCode': str,
+                            'StockCode': str, 
                             'CustomerID': str
                         },
                         engine='openpyxl'
                     )
-                else:
-                    st.error(f"Unsupported file format: {file_path}")
-                    return pd.DataFrame(), set()
-            except Exception as e:
-                st.error(f"Error reading file from path: {str(e)}")
+            else:
+                st.error(f"Unsupported file format: {file_path}")
                 return pd.DataFrame(), set()
         else:
             st.error("No data source provided")
             return pd.DataFrame(), set()
+        
+        # Apply memory optimization to the DataFrame
+        df = optimize_dataframe(df)
+        
+        # Force garbage collection
+        gc.collect()
         
         # Check if the required columns exist
         required_columns = ['InvoiceNo', 'Description']

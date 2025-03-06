@@ -1,0 +1,1 @@
+web: cd stream_app && streamlit run app.py 

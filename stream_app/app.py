@@ -11,6 +11,13 @@ st.set_page_config(
     }
 )
 
+# Import memory optimization utilities
+from render_optimization import memory_optimize, optimize_dataframe, apply_streamlit_optimizations, log_memory_usage
+
+# Apply memory optimizations for render.com deployment
+apply_streamlit_optimizations()
+log_memory_usage("App startup")
+
 import pandas as pd
 import numpy as np
 import polars as pl

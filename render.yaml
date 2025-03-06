@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: association-rule-mining-app
+    env: python
+    buildCommand: pip install -r stream_app/requirements.txt
+    startCommand: cd stream_app && streamlit run app.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.0
+      - key: STREAMLIT_SERVER_PORT
+        value: 8000
+      - key: STREAMLIT_SERVER_HEADLESS
+        value: true
+      - key: STREAMLIT_SERVER_MAX_UPLOAD_SIZE
+        value: 25
+    plan: free # Or specify your plan type
+    # Resource limits
+    scaling:
+      minInstances: 1
+      maxInstances: 1
+    healthCheckPath: /_stcore/health  # Streamlit health check endpoint 
