@@ -8,7 +8,7 @@ from functools import partial
 from mlxtend.preprocessing import TransactionEncoder
 
 @st.cache_data
-def get_rules(basket_encoded: Union[pd.DataFrame, Dict[str, Set]], 
+def get_rules(basket_encoded: Union[pd.DataFrame, Dict[str, Set], set], 
               min_support: float = 0.01, 
               min_confidence: float = 0.3, 
               min_lift: float = 1.0,
@@ -18,7 +18,7 @@ def get_rules(basket_encoded: Union[pd.DataFrame, Dict[str, Set]],
     Generate association rules using specified algorithm with enhanced performance.
     
     Args:
-        basket_encoded: Binary encoded transaction data or dictionary of transaction sets
+        basket_encoded: Binary encoded transaction data, dictionary of transaction sets, or set
         min_support: Minimum support threshold
         min_confidence: Minimum confidence threshold
         min_lift: Minimum lift threshold
@@ -28,52 +28,87 @@ def get_rules(basket_encoded: Union[pd.DataFrame, Dict[str, Set]],
     Returns:
         DataFrame of association rules
     """
-    # Convert dictionary to proper format if needed
-    if isinstance(basket_encoded, dict):
-        # Extract transaction lists from the dictionary
-        transactions = list(basket_encoded.values())
-        
-        # Ensure all items in transactions are strings to prevent type comparison errors
-        str_transactions = []
-        for transaction in transactions:
-            # Convert each item in the transaction to a string
-            str_transaction = [str(item) for item in transaction]
-            str_transactions.append(str_transaction)
-        
-        # Use TransactionEncoder to convert to binary format
-        te = TransactionEncoder()
-        te_ary = te.fit_transform(str_transactions)
-        basket_df = pd.DataFrame(te_ary, columns=te.columns_)
-    else:
-        # Already a DataFrame
-        basket_df = basket_encoded
+    # Print debugging information
+    print(f"get_rules called with type: {type(basket_encoded)}")
     
-    # Apply selected algorithm
-    if algorithm == 'fpgrowth':
-        frequent_itemsets = fpgrowth(basket_df, 
-                                    min_support=min_support, 
-                                    use_colnames=True,
-                                    max_len=max_len)
-    else:  # default to apriori
-        frequent_itemsets = apriori(basket_df, 
-                                  min_support=min_support, 
-                                  use_colnames=True,
-                                  max_len=max_len)
-    
-    # If no frequent itemsets found, return empty DataFrame
-    if frequent_itemsets.empty:
+    try:
+        # Convert dictionary to proper format if needed
+        if isinstance(basket_encoded, dict):
+            # Extract transaction lists from the dictionary
+            transactions = list(basket_encoded.values())
+            
+            # Ensure all items in transactions are strings to prevent type comparison errors
+            str_transactions = []
+            for transaction in transactions:
+                # Convert each item in the transaction to a string
+                str_transaction = [str(item) for item in transaction]
+                str_transactions.append(str_transaction)
+            
+            # Use TransactionEncoder to convert to binary format
+            te = TransactionEncoder()
+            te_ary = te.fit_transform(str_transactions)
+            basket_df = pd.DataFrame(te_ary, columns=te.columns_)
+        elif isinstance(basket_encoded, set):
+            # Handle set type by creating individual transactions
+            print(f"Processing set with {len(basket_encoded)} items")
+            # For a set, create individual transactions (one item per transaction)
+            transactions = [[item] for item in basket_encoded]
+            
+            # Ensure all items are strings
+            str_transactions = []
+            for transaction in transactions:
+                str_transaction = [str(item) for item in transaction]
+                str_transactions.append(str_transaction)
+            
+            # Use TransactionEncoder to convert to binary format
+            te = TransactionEncoder()
+            te_ary = te.fit_transform(str_transactions)
+            basket_df = pd.DataFrame(te_ary, columns=te.columns_)
+        else:
+            # Check if it's actually a DataFrame
+            if hasattr(basket_encoded, 'values') and hasattr(basket_encoded, 'columns'):
+                basket_df = basket_encoded
+                print(f"Processing DataFrame with shape {basket_df.shape}")
+            else:
+                # If it's not a recognized type, create an empty DataFrame with proper columns
+                print(f"Unrecognized basket_encoded type: {type(basket_encoded)}")
+                return pd.DataFrame(columns=['antecedents', 'consequents', 'support', 
+                                          'confidence', 'lift', 'leverage', 'conviction'])
+        
+        # Apply selected algorithm
+        print(f"Using algorithm: {algorithm}")
+        if algorithm == 'fpgrowth':
+            frequent_itemsets = fpgrowth(basket_df, 
+                                        min_support=min_support, 
+                                        use_colnames=True,
+                                        max_len=max_len)
+        else:  # default to apriori
+            frequent_itemsets = apriori(basket_df, 
+                                      min_support=min_support, 
+                                      use_colnames=True,
+                                      max_len=max_len)
+        
+        # If no frequent itemsets found, return empty DataFrame
+        if frequent_itemsets.empty:
+            print("No frequent itemsets found")
+            return pd.DataFrame(columns=['antecedents', 'consequents', 'support', 
+                                       'confidence', 'lift', 'leverage', 'conviction'])
+        
+        # Generate association rules
+        rules = association_rules(frequent_itemsets, 
+                                 metric="confidence", 
+                                 min_threshold=min_confidence)
+        
+        # Filter by minimum lift
+        rules = rules[rules['lift'] >= min_lift]
+        print(f"Generated {len(rules)} rules")
+        
+        return rules
+    except Exception as e:
+        print(f"Error in get_rules: {e}")
+        # Return empty DataFrame as fallback
         return pd.DataFrame(columns=['antecedents', 'consequents', 'support', 
                                    'confidence', 'lift', 'leverage', 'conviction'])
-    
-    # Generate association rules
-    rules = association_rules(frequent_itemsets, 
-                             metric="confidence", 
-                             min_threshold=min_confidence)
-    
-    # Filter by minimum lift
-    rules = rules[rules['lift'] >= min_lift]
-    
-    return rules
 
 @st.cache_data
 def process_rules_batch(_df: pd.DataFrame, batch_size: int = 1000, 
