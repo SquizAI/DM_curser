@@ -29,9 +29,6 @@ gc.enable()
 # Limit pandas memory usage
 pd.options.mode.chained_assignment = None  # default='warn'
 
-# Set lower precision for numeric columns to reduce memory
-pd.set_option('display.precision', 3)  # Use fully qualified name to avoid ambiguity
-
 # Function to safely prepare DataFrames for Streamlit display
 def safe_display_df(df):
     """Convert a DataFrame to be safely displayed in Streamlit"""
