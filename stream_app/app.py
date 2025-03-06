@@ -23,6 +23,39 @@ import gc
 print(f"Python version: {sys.version}")
 print(f"Running app.py from: {__file__}")
 
+# Force garbage collection more aggressively
+gc.enable()
+
+# Limit pandas memory usage
+pd.options.mode.chained_assignment = None  # default='warn'
+
+# Set lower precision for numeric columns to reduce memory
+pd.set_option('precision', 3)
+
+# Function to safely prepare DataFrames for Streamlit display
+def safe_display_df(df):
+    """Convert a DataFrame to be safely displayed in Streamlit"""
+    if df is None:
+        return pd.DataFrame()
+    
+    try:
+        # Make a copy to avoid modifying the original
+        display_df = df.copy()
+        
+        # Convert any categorical columns to string to prevent conversion errors
+        for col in display_df.select_dtypes(include=['category']).columns:
+            display_df[col] = display_df[col].astype(str)
+            
+        # Ensure all object columns are strings (handles mixed types)
+        for col in display_df.select_dtypes(include=['object']).columns:
+            display_df[col] = display_df[col].astype(str)
+            
+        return display_df
+    except Exception as e:
+        print(f"Error preparing DataFrame for display: {e}")
+        # Return a minimal DataFrame as fallback
+        return pd.DataFrame({"Error": ["Failed to prepare DataFrame for display"]})
+
 # Add utils directory to sys.path to allow importing modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'utils'))
@@ -678,7 +711,8 @@ with data_tabs[2]:  # Data Preview tab
             st.metric("Countries", f"{len(st.session_state.df['Country'].unique()):,}" if 'Country' in st.session_state.df.columns else "N/A")
         
         st.subheader("Data Preview (First 10 rows)")
-        st.dataframe(st.session_state.df.head(10), use_container_width=True)
+        # Use the safe display function to prevent PyArrow errors
+        st.dataframe(safe_display_df(st.session_state.df.head(10)), use_container_width=True)
         
         # Show data types
         st.subheader("Column Data Types")
@@ -688,7 +722,8 @@ with data_tabs[2]:  # Data Preview tab
             'Non-Null Values': st.session_state.df.count().values,
             'Null %': (st.session_state.df.isna().mean() * 100).round(2).astype(str) + '%'
         })
-        st.dataframe(df_types, use_container_width=True)
+        # Use safe display here as well
+        st.dataframe(safe_display_df(df_types), use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
     else:
         st.info("Load data first to see a preview")
@@ -1220,7 +1255,7 @@ if st.session_state.df is not None:
                         rec_df = pd.DataFrame(rec_data)
                         
                         # Display as a table
-                        st.dataframe(rec_df, use_container_width=True)
+                        st.dataframe(safe_display_df(rec_df), use_container_width=True)
                         
                         # Visualize the recommendations
                         st.plotly_chart(
@@ -1251,7 +1286,7 @@ if st.session_state.df is not None:
                 )
                 
                 # Display as a table
-                st.dataframe(top_combinations, use_container_width=True)
+                st.dataframe(safe_display_df(top_combinations), use_container_width=True)
                 
         else:
             st.info("Generate association rules to see product recommendations")
