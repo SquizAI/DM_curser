@@ -50,8 +50,7 @@ from utils.performance import (
     profile_memory_usage, time_function, convert_pandas_to_polars,
     convert_polars_to_pandas, optimize_pandas_dtypes, parallel_process_data,
     optimize_polars_pipeline, scan_csv_lazy, process_large_dataset,
-    aggregate_rules_efficiently, create_polars_transaction_encoder,
-    benchmark_function, optimize_streamlit_performance
+    optimize_streamlit_performance
 )
 
 # Add a custom theme and styling for better UI
