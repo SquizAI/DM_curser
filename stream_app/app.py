@@ -289,7 +289,7 @@ if 'recommendations' not in st.session_state:
     st.session_state.recommendations = {}
 
 # Apply performance optimizations
-optimize_streamlit_performance()
+# optimize_streamlit_performance()
 
 # Main application header
 st.title("🚀 Association Rule Mining Application")
