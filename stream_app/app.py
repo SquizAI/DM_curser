@@ -35,7 +35,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Import utility modules
 from utils.data_loader import load_and_prep_data, create_time_based_datasets, segment_customers
-from utils.rule_mining import get_rules, process_rules_batch, analyze_rules_over_time, prune_redundant_rules, detect_insights
+from utils.rule_mining import get_rules, process_rules_batch, analyze_rules_over_time, prune_redundant_rules, detect_insights, mine_rules_by_segment
 from utils.visualizations import (
     create_rule_scatterplot, create_3d_rule_visualization, create_rule_network, 
     create_item_frequency_chart, create_metric_distribution_plots, visualize_rules_over_time,
@@ -276,8 +276,8 @@ if 'df' not in st.session_state:
     st.session_state.df = None
 if 'rules' not in st.session_state:
     st.session_state.rules = None
-if 'time_period_rules' not in st.session_state:
-    st.session_state.time_period_rules = None
+if 'time_rules' not in st.session_state:
+    st.session_state.time_rules = None
 if 'segment_rules' not in st.session_state:
     st.session_state.segment_rules = None
 if 'insights' not in st.session_state:
@@ -546,6 +546,19 @@ if st.session_state.df is not None:
                         segments = segment_customers(st.session_state.df, method=segmentation_method)
                         st.session_state.customer_segments = segments
                         st.session_state.processing_time['segmentation'] = time.time() - segment_start
+                        
+                        # Mine rules for each segment
+                        with st.spinner("Mining rules for each segment..."):
+                            segment_rules_start = time.time()
+                            segment_rules = mine_rules_by_segment(
+                                st.session_state.df, 
+                                segments, 
+                                min_support=min_support,
+                                min_confidence=min_confidence,
+                                min_lift=min_lift
+                            )
+                            st.session_state.segment_rules = segment_rules
+                            st.session_state.processing_time['segment_rules'] = time.time() - segment_rules_start
                 
                 # Show success message with rule count
                 if rules_df.empty:
@@ -763,12 +776,12 @@ if st.session_state.df is not None:
     
     # Time Analysis tab
     with tab3:
-        if st.session_state.time_period_rules:
+        if st.session_state.time_rules is not None:
             st.markdown("<h2 class='sub-header'>Rule Evolution Over Time</h2>", unsafe_allow_html=True)
             
             # Visualization of rule metrics over time
             st.plotly_chart(
-                create_temporal_analysis_chart(st.session_state.time_period_rules),
+                create_temporal_analysis_chart(st.session_state.time_rules),
                 use_container_width=True,
                 key="temporal_analysis_chart"
             )
@@ -777,7 +790,7 @@ if st.session_state.df is not None:
             st.markdown("<h2 class='sub-header'>Time Period Comparison</h2>", unsafe_allow_html=True)
             
             # Select periods to compare
-            periods = list(st.session_state.time_period_rules.keys())
+            periods = list(st.session_state.time_rules.keys())
             if len(periods) >= 2:
                 col1, col2 = st.columns(2)
                 
@@ -790,8 +803,8 @@ if st.session_state.df is not None:
                 # Compare the selected periods
                 if period1 != period2:
                     comparison_insights = compare_time_periods(
-                        st.session_state.time_period_rules[period1],
-                        st.session_state.time_period_rules[period2]
+                        st.session_state.time_rules[period1],
+                        st.session_state.time_rules[period2]
                     )
                     
                     for insight in comparison_insights:
@@ -807,7 +820,7 @@ if st.session_state.df is not None:
             selected_period = st.selectbox("Select Time Period", periods)
             
             st.dataframe(
-                create_top_rules_table(st.session_state.time_period_rules[selected_period]),
+                create_top_rules_table(st.session_state.time_rules[selected_period]),
                 use_container_width=True
             )
             

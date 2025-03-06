@@ -252,3 +252,62 @@ def detect_insights(rules: pd.DataFrame) -> List[Dict[str, Union[str, float]]]:
             insights.append(insight)
     
     return insights 
+
+@st.cache_data
+def mine_rules_by_segment(df: pd.DataFrame,
+                         segments_df: pd.DataFrame,
+                         min_support: float = 0.01,
+                         min_confidence: float = 0.3,
+                         min_lift: float = 1.0) -> Dict[str, pd.DataFrame]:
+    """
+    Mine association rules for each customer segment
+    
+    Args:
+        df: Original transaction DataFrame
+        segments_df: DataFrame with customer segments
+        min_support, min_confidence, min_lift: Thresholds for rule mining
+        
+    Returns:
+        Dictionary mapping segment names to rule DataFrames
+    """
+    segment_rules = {}
+    
+    # Get segment column name - different depending on segmentation method
+    if 'Segment' in segments_df.columns:
+        segment_col = 'Segment'
+    elif 'SpendSegment' in segments_df.columns:
+        segment_col = 'SpendSegment'
+    elif 'FrequencySegment' in segments_df.columns:
+        segment_col = 'FrequencySegment'
+    else:
+        # No valid segment column found
+        return {}
+    
+    # Get unique segments
+    unique_segments = segments_df[segment_col].unique()
+    
+    # For each segment, filter transactions and mine rules
+    for segment in unique_segments:
+        # Get customer IDs for this segment
+        segment_customers = segments_df[segments_df[segment_col] == segment]['CustomerID'].unique()
+        
+        # Filter transactions for these customers
+        segment_df = df[df['CustomerID'].isin(segment_customers)]
+        
+        # Skip if not enough transactions
+        if len(segment_df['InvoiceNo'].unique()) < 10:
+            segment_rules[segment] = pd.DataFrame(columns=['antecedents', 'consequents', 'support', 
+                                                          'confidence', 'lift', 'leverage', 'conviction'])
+            continue
+        
+        # Convert to basket format
+        basket = segment_df.groupby(['InvoiceNo', 'Description'])['Quantity'].sum().unstack().reset_index().fillna(0)
+        basket_sets = (basket.drop('InvoiceNo', axis=1) > 0).astype(bool)
+        
+        # Get rules
+        rules = get_rules(basket_sets, min_support, min_confidence, min_lift)
+        
+        # Store rules for this segment
+        segment_rules[segment] = rules
+    
+    return segment_rules 
