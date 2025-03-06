@@ -1,4 +1,27 @@
 import streamlit as st
+import sys
+import os
+import time
+import pandas as pd
+import numpy as np
+import polars as pl
+import plotly.express as px
+import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+import seaborn as sns
+from mlxtend.frequent_patterns import apriori
+from mlxtend.frequent_patterns import association_rules
+from mlxtend.preprocessing import TransactionEncoder
+import json
+from typing import List, Dict, Tuple, Set, Optional, Union
+import base64
+from io import BytesIO
+from datetime import datetime
+import gc
+
+# Print debugging information
+print(f"Python version: {sys.version}")
+print(f"Running app.py from: {__file__}")
 
 # Set page config - must be the first Streamlit command
 st.set_page_config(
@@ -11,45 +34,68 @@ st.set_page_config(
     }
 )
 
-# Import memory optimization utilities
-from render_optimization import memory_optimize, optimize_dataframe, apply_streamlit_optimizations, log_memory_usage
-
-# Apply memory optimizations for render.com deployment
-apply_streamlit_optimizations()
-log_memory_usage("App startup")
-
-# Initialize key variables to prevent NameError
-uploaded_file = None
-sample_data_requested = False
-use_polars = False
-use_cache = True
-use_sample_subset = False
-sample_size = 10
-
-import pandas as pd
-import numpy as np
-import polars as pl
-import plotly.express as px
-import plotly.graph_objects as go
-import matplotlib.pyplot as plt
-import seaborn as sns
-import time
-from mlxtend.frequent_patterns import apriori
-from mlxtend.frequent_patterns import association_rules
-from mlxtend.preprocessing import TransactionEncoder
-import os
-import json
-from typing import List, Dict, Tuple, Set, Optional, Union
-import base64
-from io import BytesIO
-from datetime import datetime
-import sys
+# Initialize ALL session state variables at the very beginning
+if 'df' not in st.session_state:
+    st.session_state.df = None
+if 'rules' not in st.session_state:
+    st.session_state.rules = None
+if 'time_rules' not in st.session_state:
+    st.session_state.time_rules = None
+if 'segment_rules' not in st.session_state:
+    st.session_state.segment_rules = None
+if 'insights' not in st.session_state:
+    st.session_state.insights = []
+if 'filtered_rules' not in st.session_state:
+    st.session_state.filtered_rules = None
+if 'basket_encoded' not in st.session_state:
+    st.session_state.basket_encoded = None
+if 'recommendations' not in st.session_state:
+    st.session_state.recommendations = {}
+if 'data_loaded' not in st.session_state:
+    st.session_state.data_loaded = False
+if 'show_loader_animation' not in st.session_state:
+    st.session_state.show_loader_animation = False
+if 'data_loading_started' not in st.session_state:
+    st.session_state.data_loading_started = False
+if 'last_clicked_button' not in st.session_state:
+    st.session_state.last_clicked_button = None
+if 'uploaded_file' not in st.session_state:
+    st.session_state.uploaded_file = None
+if 'uploaded_file_path' not in st.session_state:
+    st.session_state.uploaded_file_path = None
+if 'use_polars' not in st.session_state:
+    st.session_state.use_polars = False
+if 'use_cache' not in st.session_state:
+    st.session_state.use_cache = True
+if 'use_sample_subset' not in st.session_state:
+    st.session_state.use_sample_subset = False
+if 'sample_size' not in st.session_state:
+    st.session_state.sample_size = 10
+if 'processing_time' not in st.session_state:
+    st.session_state.processing_time = {}
 
 # Add utils directory to sys.path to allow importing modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+# Import memory optimization utilities with error handling
+try:
+    from render_optimization import memory_optimize, optimize_dataframe, apply_streamlit_optimizations, log_memory_usage
+    # Apply memory optimizations for render.com deployment
+    apply_streamlit_optimizations()
+    log_memory_usage("App startup")
+except Exception as e:
+    print(f"Error importing optimization utilities: {e}")
+    # Define placeholders if imports fail
+    def memory_optimize(func):
+        return func
+    def optimize_dataframe(df):
+        return df
+    def log_memory_usage(msg):
+        print(msg)
+    def apply_streamlit_optimizations():
+        pass
+
 # Import utility modules lazily to improve startup time
-# This defers module imports until they're actually needed
 def import_utils_when_needed():
     # Create global variables for the modules
     global load_and_prep_data, create_time_based_datasets, segment_customers
@@ -91,24 +137,34 @@ if 'uploaded_file_path' not in st.session_state:
 # Add a custom theme and styling for better UI
 st.markdown("""
 <style>
-    /* Main theme colors - dark mode compatible */
+    /* Custom theme colors */
     :root {
-        --primary-color: #1E88E5;
-        --secondary-color: #4CAF50;
-        --background-color: rgba(30, 34, 45, 0.1);
-        --text-color: rgba(250, 250, 250, 0.9);
-        --card-bg-color: rgba(30, 34, 45, 0.5);
-        --highlight-color: rgba(30, 136, 229, 0.2);
+        --primary-color: #1E88E5; 
+        --background-color: #fafafa;
+        --secondary-background-color: #f0f2f6;
+        --text-color: #262730;
+        --font: "Source Sans Pro", sans-serif;
+        --card-bg-color: white;
     }
     
-    /* Main container styling */
-    .main {
+    /* Dark mode compatibility */
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --background-color: #0e1117;
+            --secondary-background-color: #262730;
+            --text-color: #fafafa;
+            --card-bg-color: #262730;
+        }
+    }
+    
+    /* Global styles */
+    body {
+        font-family: var(--font);
         color: var(--text-color);
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }
     
     /* Card styling */
-    .stCard {
+    .card {
         border-radius: 10px;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
         padding: 20px;
@@ -127,180 +183,28 @@ st.markdown("""
         border-bottom: 2px solid var(--primary-color);
     }
     
-    /* Workflow steps */
-    .workflow-step {
-        background-color: var(--card-bg-color);
-        border-left: 5px solid var(--primary-color);
-        padding: 15px;
-        margin-bottom: 15px;
-        border-radius: 0 5px 5px 0;
-        color: var(--text-color);
-    }
-    
-    .workflow-step-number {
-        background-color: var(--primary-color);
-        color: white;
-        border-radius: 50%;
-        width: 30px;
-        height: 30px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        margin-right: 10px;
-        font-weight: bold;
-    }
-    
-    /* Metrics display */
-    .metric-container {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin: 20px 0;
-    }
-    
-    .metric-card {
-        flex: 1;
-        min-width: 200px;
-        padding: 20px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-        text-align: center;
-        border-radius: 8px;
-        background-color: var(--card-bg-color);
-        color: var(--text-color);
-    }
-    
-    .metric-value {
-        font-size: 2rem;
-        font-weight: 700;
-        color: var(--primary-color);
-    }
-    
-    .metric-label {
-        font-size: 1rem;
-        color: rgba(200, 200, 200, 0.8);
-    }
-    
-    /* Highlight important info */
-    .highlight {
-        background-color: var(--highlight-color);
-        padding: 10px;
-        border-radius: 5px;
-        border-left: 5px solid var(--primary-color);
-        color: var(--text-color);
-    }
-    
-    /* Success messages */
-    .success-message {
-        background-color: rgba(76, 175, 80, 0.2);
-        border-left: 5px solid var(--secondary-color);
-        padding: 10px;
-        border-radius: 0 5px 5px 0;
-        margin: 10px 0;
-        color: var(--text-color);
-    }
-    
-    /* Parameters section */
+    /* Parameter section */
     .parameter-section {
         background-color: var(--card-bg-color);
         padding: 15px;
         border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-        margin-bottom: 20px;
-        color: var(--text-color);
+        margin-bottom: 15px;
     }
     
-    /* Tooltip styling */
-    .tooltip {
-        position: relative;
-        display: inline-block;
-        cursor: help;
+    /* Highlight section */
+    .highlight {
+        background-color: rgba(30, 136, 229, 0.1);
+        border-left: 4px solid var(--primary-color);
+        padding: 10px 15px;
+        margin: 10px 0;
     }
     
-    .tooltip .tooltiptext {
-        visibility: hidden;
-        width: 200px;
-        background-color: rgba(50, 50, 50, 0.95);
-        color: #fff;
-        text-align: center;
-        border-radius: 6px;
-        padding: 5px;
-        position: absolute;
-        z-index: 1;
-        bottom: 125%;
-        left: 50%;
-        margin-left: -100px;
-        opacity: 0;
-        transition: opacity 0.3s;
-    }
-    
-    .tooltip:hover .tooltiptext {
-        visibility: visible;
-        opacity: 1;
-    }
-    
-    /* Additional dark theme compatibility styles */
-    div.stButton button {
-        background-color: var(--primary-color);
-        color: white;
-        border: none;
-    }
-    
-    div.stButton button:hover {
-        background-color: #1565C0;
-        color: white;
-    }
-    
-    .stTextInput>div>div>input {
-        color: var(--text-color);
-        background-color: rgba(50, 50, 50, 0.2);
-    }
-    
-    .stSelectbox>div>div>div {
-        color: var(--text-color);
-        background-color: rgba(50, 50, 50, 0.2);
-    }
-    
-    .stSlider>div>div>div {
-        color: var(--text-color);
-    }
-    
-    /* Ensure tab text is visible */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 4px;
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        background-color: rgba(50, 50, 50, 0.2);
-        color: var(--text-color);
-        border-radius: 4px 4px 0 0;
-        padding: 10px 16px;
-        border: none;
-    }
-    
-    .stTabs [aria-selected="true"] {
-        background-color: var(--primary-color) !important;
-        color: white !important;
-    }
-    
-    /* Fix table and dataframe text color */
-    .stDataFrame table, .stTable table {
-        color: var(--text-color);
-    }
-    
-    .stDataFrame th, .stTable th {
-        background-color: rgba(30, 136, 229, 0.2);
-        color: var(--text-color);
-    }
-    
-    /* Fix expander styling */
-    .streamlit-expanderHeader {
-        color: var(--text-color);
-        background-color: rgba(50, 50, 50, 0.1);
-    }
-    
-    /* Make sure all text elements inherit the text color */
-    p, h1, h2, h3, h4, h5, h6, span, label, .stMarkdown {
-        color: var(--text-color) !important;
+    /* Success message */
+    .success-message {
+        background-color: rgba(76, 175, 80, 0.1);
+        border-left: 4px solid #4CAF50;
+        padding: 10px 15px;
+        margin: 10px 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -316,8 +220,6 @@ if 'segment_rules' not in st.session_state:
     st.session_state.segment_rules = None
 if 'insights' not in st.session_state:
     st.session_state.insights = []
-if 'processing_time' not in st.session_state:
-    st.session_state.processing_time = {}
 if 'filtered_rules' not in st.session_state:
     st.session_state.filtered_rules = None
 if 'basket_encoded' not in st.session_state:
@@ -359,61 +261,56 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Data loading section with tabs for better organization
+st.markdown('<div class="section-header">📥 Data Input</div>', unsafe_allow_html=True)
 data_tabs = st.tabs(["Upload Data", "Use Sample Data", "Data Preview"])
 
-# Add a spinner and progress bar for loading visualization
+# Check if we need to show the loading animation
 if st.session_state.show_loader_animation:
+    # First import the modules if needed
+    if not st.session_state.data_loading_started:
+        with st.spinner("Initializing modules..."):
+            import_utils_when_needed()
+            st.session_state.data_loading_started = True
+    
+    # Show a loading spinner and progress bar
     spinner_col, progress_col = st.columns([1, 3])
     with spinner_col:
         st.spinner("Loading data...")
     with progress_col:
         progress_bar = st.progress(0)
         for i in range(100):
-            time.sleep(0.01)  # Simulate progress
+            time.sleep(0.01)
             progress_bar.progress(i + 1)
     
-    # Clear the animation after it completes
-    st.session_state.show_loader_animation = False
-    
-    # Import the heavy modules only when needed
-    if not st.session_state.data_loading_started:
-        with st.spinner("Initializing modules..."):
-            import_utils_when_needed()
-            st.session_state.data_loading_started = True
-    
-    # Process uploaded file if it exists
+    # Handle data processing based on which button was clicked
     if st.session_state.last_clicked_button == "Load Uploaded Data" and not st.session_state.data_loaded:
         try:
             with st.spinner("Processing uploaded data..."):
                 start_time = time.time()
                 
-                # Get the file from session state
-                file = st.session_state.uploaded_file
-                
-                # Use Polars if selected
-                if st.session_state.get('use_polars', False):
-                    # Import the specific function for Polars
-                    from utils.performance import convert_pandas_to_polars
+                # Use the file from session state
+                if st.session_state.uploaded_file:
+                    uploaded_file = st.session_state.uploaded_file
                     
-                    # Load with pandas first
-                    df, basket_encoded = load_and_prep_data(file=file)
+                    # Use Polars if selected
+                    if st.session_state.use_polars:
+                        from utils.performance import convert_pandas_to_polars
+                        df, basket_encoded = load_and_prep_data(file=uploaded_file)
+                        df = convert_pandas_to_polars(df)
+                    else:
+                        df, basket_encoded = load_and_prep_data(file=uploaded_file)
                     
-                    # Then convert to polars for faster processing
-                    df = convert_pandas_to_polars(df)
+                    st.session_state.df = df
+                    st.session_state.basket_encoded = basket_encoded
+                    st.session_state.processing_time['data_loading'] = time.time() - start_time
+                    st.session_state.data_loaded = True
+                    
+                    st.success(f"✅ Successfully loaded data with {df.shape[0]} transactions")
                 else:
-                    df, basket_encoded = load_and_prep_data(file=file)
-                
-                st.session_state.df = df
-                st.session_state.basket_encoded = basket_encoded
-                st.session_state.processing_time['data_loading'] = time.time() - start_time
-                st.session_state.data_loaded = True
-                
-                st.success(f"✅ Successfully loaded data with {df.shape[0]} transactions and {df.shape[1]} columns")
-                
+                    st.error("No file uploaded. Please upload a file first.")
         except Exception as e:
             st.error(f"Error loading data: {str(e)}")
     
-    # Handle sample data loading
     elif st.session_state.last_clicked_button == "Load Sample Data" and not st.session_state.data_loaded:
         try:
             with st.spinner("Loading sample data..."):
@@ -423,11 +320,11 @@ if st.session_state.show_loader_animation:
                 sample_data_path = os.path.join(os.path.dirname(__file__), "Online Retail.xlsx")
                 
                 # Check if we have an optimized version of the file
-                from utils.data_converter import get_optimized_file_path, convert_excel_to_parquet
-                
-                # Convert to parquet if not already done
-                if sample_data_path.endswith('.xlsx') and os.path.exists(sample_data_path):
-                    try:
+                try:
+                    from utils.data_converter import get_optimized_file_path, convert_excel_to_parquet
+                    
+                    # Convert to parquet if not already done
+                    if sample_data_path.endswith('.xlsx') and os.path.exists(sample_data_path):
                         # First check if faster version exists
                         optimized_path = get_optimized_file_path(sample_data_path)
                         
@@ -438,13 +335,13 @@ if st.session_state.show_loader_animation:
                         
                         # Use the optimized path
                         sample_data_path = optimized_path
-                    except Exception as e:
-                        st.warning(f"Could not optimize file format: {e}")
+                except Exception as e:
+                    st.warning(f"Could not optimize file format: {e}")
                 
                 if os.path.exists(sample_data_path):
                     # Use subset if requested
-                    if st.session_state.get('use_sample_subset', False):
-                        sample_pct = st.session_state.get('sample_size', 10)
+                    if st.session_state.use_sample_subset:
+                        sample_pct = st.session_state.sample_size
                         st.info(f"Loading {sample_pct}% of the data for faster processing")
                         df, basket_encoded = load_and_prep_data(file_path=sample_data_path, sample_percentage=sample_pct)
                     else:
@@ -458,49 +355,47 @@ if st.session_state.show_loader_animation:
                     st.success(f"✅ Successfully loaded sample data with {df.shape[0]} transactions")
                 else:
                     st.error(f"Sample data file not found at {sample_data_path}. Please upload a file instead.")
-            
         except Exception as e:
             st.error(f"Error loading sample data: {str(e)}")
-
-# Store the last clicked button for state management
-for button in ['Load Uploaded Data', 'Load Sample Data']:
-    if button not in st.session_state:
-        st.session_state[button] = False
     
-    if st.session_state.get(button, False):
-        st.session_state.last_clicked_button = button
+    # Turn off the animation flag after processing
+    st.session_state.show_loader_animation = False
+    st.rerun()  # Refresh UI after data load
 
-with data_tabs[0]:  # Upload Data tab
+# Upload Data tab
+with data_tabs[0]:
     st.markdown('<div class="parameter-section">', unsafe_allow_html=True)
-    uploaded_file = st.file_uploader("Upload your transaction data (CSV or Excel)", type=["csv", "xlsx", "xls"])
+    # File uploader
+    _uploaded_file = st.file_uploader("Upload your transaction data (CSV or Excel)", 
+                                     type=["csv", "xlsx", "xls", "parquet"])
     
-    # Store in session state when changed
-    if uploaded_file is not None:
-        st.session_state.uploaded_file = uploaded_file
-    
-    st.info("💡 Tip: Loading large files may take some time. Consider using a CSV file instead of Excel for faster processing.")
-    
-    if uploaded_file is not None:
-        st.info(f"File '{uploaded_file.name}' ready to load")
+    # If a file is uploaded, store it in session state
+    if _uploaded_file is not None:
+        st.session_state.uploaded_file = _uploaded_file
         
-        # Add load options and store in session state
-        use_cache = st.checkbox("Use cached data if available", value=True, 
-                               help="Reuse previously loaded data to speed up processing")
-        st.session_state.use_cache = use_cache
+        st.info(f"File '{_uploaded_file.name}' ready to load")
         
-        use_polars = st.checkbox("Use Polars instead of Pandas (faster)", value=True,
-                                help="Polars is a faster data processing library that can speed up data loading")
-        st.session_state.use_polars = use_polars
+        # Show options
+        _use_cache = st.checkbox("Use cached data if available", value=True,
+                                help="Reuse previously loaded data to speed up processing")
+        st.session_state.use_cache = _use_cache
+        
+        _use_polars = st.checkbox("Use Polars instead of Pandas (faster)", value=True,
+                                 help="Polars is a faster data processing library that can speed up data loading")
+        st.session_state.use_polars = _use_polars
         
         # Add a button to load the data
         if st.button("Load Uploaded Data"):
-            # Set the loader animation flag and store what button was clicked
-            st.session_state.show_loader_animation = True
             st.session_state.last_clicked_button = "Load Uploaded Data"
-            st.rerun()  # Trigger a rerun to show animation
+            st.session_state.show_loader_animation = True
+            st.rerun()
+    else:
+        st.info("💡 Tip: Upload a CSV or Excel file containing transaction data. Each row should represent an item in a transaction.")
+        
     st.markdown('</div>', unsafe_allow_html=True)
-            
-with data_tabs[1]:  # Sample Data tab
+
+# Sample Data tab
+with data_tabs[1]:
     st.markdown('<div class="parameter-section">', unsafe_allow_html=True)
     st.markdown("""
     <div class="highlight">
@@ -509,27 +404,26 @@ with data_tabs[1]:  # Sample Data tab
     </div>
     """, unsafe_allow_html=True)
     
-    # Add load options and store in session state
-    use_cache = st.checkbox("Use cached data if available (faster)", value=True,
-                           help="Reuse previously loaded data to speed up processing", key="sample_use_cache")
-    st.session_state.use_cache = use_cache
+    # Sample data options
+    _use_cache = st.checkbox("Use cached data if available (faster)", value=True,
+                            help="Reuse previously loaded data to speed up processing", key="sample_use_cache")
+    st.session_state.use_cache = _use_cache
     
-    use_sample_subset = st.checkbox("Use smaller sample (much faster)", value=True, 
-                                   help="Load only a subset of the data for faster processing")
-    st.session_state.use_sample_subset = use_sample_subset
+    _use_sample_subset = st.checkbox("Use smaller sample (much faster)", value=True,
+                                    help="Load only a subset of the data for faster processing")
+    st.session_state.use_sample_subset = _use_sample_subset
     
-    sample_size = 10
-    if use_sample_subset:
-        sample_size = st.slider("Sample size (% of full data)", 1, 50, 10, 
-                               help="Smaller samples load much faster but may affect analysis quality")
-        st.session_state.sample_size = sample_size
+    if _use_sample_subset:
+        _sample_size = st.slider("Sample size (% of full data)", 1, 50, 10,
+                                help="Smaller samples load much faster but may affect analysis quality")
+        st.session_state.sample_size = _sample_size
     
-    # Add a button to load sample data
+    # Button to load sample data
     if st.button("Load Sample Data"):
-        # Set the loader animation flag and store what button was clicked
-        st.session_state.show_loader_animation = True
         st.session_state.last_clicked_button = "Load Sample Data"
-        st.rerun()  # Trigger a rerun to show animation
+        st.session_state.show_loader_animation = True
+        st.rerun()
+        
     st.markdown('</div>', unsafe_allow_html=True)
 
 with data_tabs[2]:  # Data Preview tab
