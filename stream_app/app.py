@@ -779,16 +779,33 @@ if st.session_state.df is not None:
                     "prune_redundant": prune_redundant
                 }
                 
+                # Preprocess basket_encoded if it's a set to prevent AttributeError
+                if isinstance(st.session_state.basket_encoded, set):
+                    print("Preprocessing set data before passing to get_rules")
+                    # Convert set to list of lists (one item per transaction)
+                    transactions = [[item] for item in st.session_state.basket_encoded]
+                    
+                    # Convert to proper DataFrame using TransactionEncoder
+                    te = TransactionEncoder()
+                    te_ary = te.fit_transform(transactions)
+                    basket_df = pd.DataFrame(te_ary, columns=te.columns_)
+                    
+                    # Replace the set with the DataFrame
+                    basket_data = basket_df
+                else:
+                    # Use the original data
+                    basket_data = st.session_state.basket_encoded
+                
                 # Call the rule mining function
                 if algorithm == "FP-Growth":
-                    rules_df = get_rules(st.session_state.basket_encoded, 
+                    rules_df = get_rules(basket_data, 
                                        min_support=min_support, 
                                        min_confidence=min_confidence,
                                        min_lift=min_lift,
                                        algorithm='fpgrowth',
                                        max_len=max_len)
                 else:
-                    rules_df = get_rules(st.session_state.basket_encoded, 
+                    rules_df = get_rules(basket_data, 
                                        min_support=min_support, 
                                        min_confidence=min_confidence,
                                        min_lift=min_lift,
