@@ -19,6 +19,20 @@ from io import BytesIO
 from datetime import datetime
 import gc
 
+# Directly import the rule mining function to fix NameError
+try:
+    from utils.rule_mining import get_rules, prune_redundant_rules
+    print("Successfully imported rule mining functions")
+except Exception as e:
+    print(f"Error importing rule mining functions: {e}")
+    # Define a placeholder in case of import error
+    def get_rules(*args, **kwargs):
+        st.error("Rule mining functions could not be loaded. Please check the logs.")
+        return pd.DataFrame()
+    
+    def prune_redundant_rules(rules_df):
+        return rules_df
+
 # Print debugging information
 print(f"Python version: {sys.version}")
 print(f"Running app.py from: {__file__}")
