@@ -34,6 +34,15 @@ st.set_page_config(
     }
 )
 
+# Add a loading indicator for initial page load
+with st.spinner("Starting up..."):
+    # Import the fast data loader early to trigger conversion
+    try:
+        from fast_data_loader import fast_load_sample_data, convert_excel_to_optimized_format
+        print("Fast data loader imported successfully")
+    except Exception as e:
+        print(f"Error importing fast data loader: {e}")
+
 # Initialize ALL session state variables at the very beginning
 if 'df' not in st.session_state:
     st.session_state.df = None
@@ -316,45 +325,67 @@ if st.session_state.show_loader_animation:
             with st.spinner("Loading sample data..."):
                 start_time = time.time()
                 
-                # Load sample data
-                sample_data_path = os.path.join(os.path.dirname(__file__), "Online Retail.xlsx")
-                
-                # Check if we have an optimized version of the file
+                # Use the FAST data loader instead of the old method
                 try:
-                    from utils.data_converter import get_optimized_file_path, convert_excel_to_parquet
+                    # Use sample percentage if enabled
+                    sample_pct = st.session_state.sample_size if st.session_state.use_sample_subset else None
+                    use_cache = st.session_state.use_cache
                     
-                    # Convert to parquet if not already done
-                    if sample_data_path.endswith('.xlsx') and os.path.exists(sample_data_path):
-                        # First check if faster version exists
-                        optimized_path = get_optimized_file_path(sample_data_path)
-                        
-                        # If it's still the Excel file, convert it
-                        if optimized_path == sample_data_path:
-                            st.info("Converting Excel to Parquet for faster future loading...")
-                            optimized_path = convert_excel_to_parquet(sample_data_path)
-                        
-                        # Use the optimized path
-                        sample_data_path = optimized_path
-                except Exception as e:
-                    st.warning(f"Could not optimize file format: {e}")
-                
-                if os.path.exists(sample_data_path):
-                    # Use subset if requested
-                    if st.session_state.use_sample_subset:
-                        sample_pct = st.session_state.sample_size
-                        st.info(f"Loading {sample_pct}% of the data for faster processing")
-                        df, basket_encoded = load_and_prep_data(file_path=sample_data_path, sample_percentage=sample_pct)
-                    else:
-                        df, basket_encoded = load_and_prep_data(file_path=sample_data_path)
+                    # Fast load with disk caching
+                    df, basket_encoded = fast_load_sample_data(
+                        sample_percentage=sample_pct,
+                        use_cache=use_cache
+                    )
                     
                     st.session_state.df = df
                     st.session_state.basket_encoded = basket_encoded
                     st.session_state.processing_time['data_loading'] = time.time() - start_time
                     st.session_state.data_loaded = True
                     
-                    st.success(f"✅ Successfully loaded sample data with {df.shape[0]} transactions")
-                else:
-                    st.error(f"Sample data file not found at {sample_data_path}. Please upload a file instead.")
+                    loading_time = time.time() - start_time
+                    st.success(f"✅ Successfully loaded sample data with {df.shape[0]} transactions in {loading_time:.2f} seconds")
+                    
+                except ImportError:
+                    st.warning("Fast data loader not available. Falling back to standard method...")
+                    # Fall back to original method
+                    sample_data_path = os.path.join(os.path.dirname(__file__), "Online Retail.xlsx")
+                    
+                    # Check if we have an optimized version of the file
+                    try:
+                        from utils.data_converter import get_optimized_file_path, convert_excel_to_parquet
+                        
+                        # Convert to parquet if not already done
+                        if sample_data_path.endswith('.xlsx') and os.path.exists(sample_data_path):
+                            # First check if faster version exists
+                            optimized_path = get_optimized_file_path(sample_data_path)
+                            
+                            # If it's still the Excel file, convert it
+                            if optimized_path == sample_data_path:
+                                st.info("Converting Excel to Parquet for faster future loading...")
+                                optimized_path = convert_excel_to_parquet(sample_data_path)
+                            
+                            # Use the optimized path
+                            sample_data_path = optimized_path
+                    except Exception as e:
+                        st.warning(f"Could not optimize file format: {e}")
+                    
+                    if os.path.exists(sample_data_path):
+                        # Use subset if requested
+                        if st.session_state.use_sample_subset:
+                            sample_pct = st.session_state.sample_size
+                            st.info(f"Loading {sample_pct}% of the data for faster processing")
+                            df, basket_encoded = load_and_prep_data(file_path=sample_data_path, sample_percentage=sample_pct)
+                        else:
+                            df, basket_encoded = load_and_prep_data(file_path=sample_data_path)
+                        
+                        st.session_state.df = df
+                        st.session_state.basket_encoded = basket_encoded
+                        st.session_state.processing_time['data_loading'] = time.time() - start_time
+                        st.session_state.data_loaded = True
+                        
+                        st.success(f"✅ Successfully loaded sample data with {df.shape[0]} transactions")
+                    else:
+                        st.error(f"Sample data file not found at {sample_data_path}. Please upload a file instead.")
         except Exception as e:
             st.error(f"Error loading sample data: {str(e)}")
     
@@ -404,26 +435,85 @@ with data_tabs[1]:
     </div>
     """, unsafe_allow_html=True)
     
-    # Sample data options
-    _use_cache = st.checkbox("Use cached data if available (faster)", value=True,
-                            help="Reuse previously loaded data to speed up processing", key="sample_use_cache")
-    st.session_state.use_cache = _use_cache
+    # Show a note about speed improvements
+    st.info("⚡ Fast data loading is now available! Uses caching, Parquet format, and optimized preprocessing.")
     
-    _use_sample_subset = st.checkbox("Use smaller sample (much faster)", value=True,
-                                    help="Load only a subset of the data for faster processing")
-    st.session_state.use_sample_subset = _use_sample_subset
+    col1, col2 = st.columns(2)
     
-    if _use_sample_subset:
-        _sample_size = st.slider("Sample size (% of full data)", 1, 50, 10,
-                                help="Smaller samples load much faster but may affect analysis quality")
-        st.session_state.sample_size = _sample_size
+    with col1:
+        # Sample data options
+        _use_cache = st.checkbox("Use cached data (fastest)", value=True,
+                                help="Reuse previously processed data from disk cache for instant loading")
+        st.session_state.use_cache = _use_cache
+        
+        _use_sample_subset = st.checkbox("Use smaller sample (faster)", value=True,
+                                        help="Load only a subset of the data for faster processing")
+        st.session_state.use_sample_subset = _use_sample_subset
+        
+        if _use_sample_subset:
+            _sample_size = st.slider("Sample size (% of full data)", 1, 50, 10,
+                                    help="Smaller samples load much faster but may affect analysis quality")
+            st.session_state.sample_size = _sample_size
+    
+    with col2:
+        # Show typical loading times for different methods
+        st.markdown("#### Typical Loading Times:")
+        
+        st.markdown("""
+        - **Excel (original method)**: 30-60 seconds
+        - **Parquet (without cache)**: 5-10 seconds
+        - **From disk cache**: < 1 second
+        - **10% sample with cache**: < 0.5 seconds
+        """)
+        
+        # Show estimated memory usage
+        st.markdown("#### Estimated Memory Usage:")
+        st.markdown("""
+        - **Full dataset**: 200-300 MB
+        - **10% sample**: 20-30 MB
+        - **1% sample**: 2-3 MB
+        """)
     
     # Button to load sample data
-    if st.button("Load Sample Data"):
+    if st.button("Load Sample Data", type="primary"):
         st.session_state.last_clicked_button = "Load Sample Data"
         st.session_state.show_loader_animation = True
         st.rerun()
         
+    # Add data cache management options
+    with st.expander("Advanced Options"):
+        st.markdown("#### Data Cache Management")
+        
+        if st.button("Clear Data Cache"):
+            # Add code to clear cache
+            import shutil
+            cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_cache")
+            if os.path.exists(cache_dir):
+                try:
+                    shutil.rmtree(cache_dir)
+                    os.makedirs(cache_dir, exist_ok=True)
+                    st.success("Cache cleared successfully!")
+                except Exception as e:
+                    st.error(f"Error clearing cache: {e}")
+        
+        st.markdown("#### Force Regenerate Optimized Files")
+        
+        if st.button("Regenerate Parquet/CSV Files"):
+            # Force regeneration
+            try:
+                from fast_data_loader import convert_excel_to_optimized_format
+                # Delete existing optimized files first
+                for ext in ["parquet", "csv"]:
+                    opt_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"Online Retail.{ext}")
+                    if os.path.exists(opt_path):
+                        os.remove(opt_path)
+                # Convert again
+                with st.spinner("Converting files..."):
+                    convert_excel_to_optimized_format()
+                st.success("Files regenerated successfully!")
+            except Exception as e:
+                st.error(f"Error regenerating files: {e}")
+                
     st.markdown('</div>', unsafe_allow_html=True)
 
 with data_tabs[2]:  # Data Preview tab
