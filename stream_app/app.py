@@ -59,50 +59,51 @@ def import_utils_when_needed():
             print("Using backup get_rules function")
             print(f"basket_encoded type: {type(basket_encoded)}")
             
-            # Convert dictionary to proper format if needed
-            if isinstance(basket_encoded, dict):
-                # Extract transaction lists from the dictionary
-                transactions = list(basket_encoded.values())
-                
-                # Ensure all items in transactions are strings to prevent type comparison errors
-                str_transactions = []
-                for transaction in transactions:
-                    # Convert each item in the transaction to a string
-                    str_transaction = [str(item) for item in transaction]
-                    str_transactions.append(str_transaction)
-                
-                # Use TransactionEncoder to convert to binary format
-                te = TransactionEncoder()
-                te_ary = te.fit_transform(str_transactions)
-                basket_df = pd.DataFrame(te_ary, columns=te.columns_)
-            elif isinstance(basket_encoded, set):
-                # Handle when basket_encoded is a set
-                print("Converting set to proper format for apriori")
-                # Convert the set to a list of lists (each transaction is a list)
-                transactions = [list(basket_encoded)]
-                
-                # Ensure all items are strings
-                str_transactions = []
-                for transaction in transactions:
-                    str_transaction = [str(item) for item in transaction]
-                    str_transactions.append(str_transaction)
-                
-                # Use TransactionEncoder to convert to binary format
-                te = TransactionEncoder()
-                te_ary = te.fit_transform(str_transactions)
-                basket_df = pd.DataFrame(te_ary, columns=te.columns_)
-            else:
-                # Check if it's actually a DataFrame
-                if hasattr(basket_encoded, 'values') and hasattr(basket_encoded, 'columns'):
-                    basket_df = basket_encoded
-                else:
-                    # If it's not a recognized type, create an empty DataFrame with proper columns
-                    print(f"Unrecognized basket_encoded type: {type(basket_encoded)}")
-                    return pd.DataFrame(columns=['antecedents', 'consequents', 'support', 
-                                            'confidence', 'lift', 'leverage', 'conviction'])
-            
-            # Apply selected algorithm
             try:
+                # Convert dictionary to proper format if needed
+                if isinstance(basket_encoded, dict):
+                    # Extract transaction lists from the dictionary
+                    transactions = list(basket_encoded.values())
+                    
+                    # Ensure all items in transactions are strings to prevent type comparison errors
+                    str_transactions = []
+                    for transaction in transactions:
+                        # Convert each item in the transaction to a string
+                        str_transaction = [str(item) for item in transaction]
+                        str_transactions.append(str_transaction)
+                    
+                    # Use TransactionEncoder to convert to binary format
+                    te = TransactionEncoder()
+                    te_ary = te.fit_transform(str_transactions)
+                    basket_df = pd.DataFrame(te_ary, columns=te.columns_)
+                elif isinstance(basket_encoded, set):
+                    # Handle when basket_encoded is a set
+                    print("Converting set to proper format for apriori")
+                    # For a set, create individual transactions 
+                    # (one item per transaction works better than putting all in one transaction)
+                    transactions = [[item] for item in basket_encoded]
+                    
+                    # Ensure all items are strings
+                    str_transactions = []
+                    for transaction in transactions:
+                        str_transaction = [str(item) for item in transaction]
+                        str_transactions.append(str_transaction)
+                    
+                    # Use TransactionEncoder to convert to binary format
+                    te = TransactionEncoder()
+                    te_ary = te.fit_transform(str_transactions)
+                    basket_df = pd.DataFrame(te_ary, columns=te.columns_)
+                else:
+                    # Check if it's actually a DataFrame
+                    if hasattr(basket_encoded, 'values') and hasattr(basket_encoded, 'columns'):
+                        basket_df = basket_encoded
+                    else:
+                        # If it's not a recognized type, create an empty DataFrame with proper columns
+                        print(f"Unrecognized basket_encoded type: {type(basket_encoded)}")
+                        return pd.DataFrame(columns=['antecedents', 'consequents', 'support', 
+                                                'confidence', 'lift', 'leverage', 'conviction'])
+                
+                # Apply selected algorithm
                 if algorithm == 'fpgrowth':
                     frequent_itemsets = fpgrowth(basket_df, 
                                               min_support=min_support, 
