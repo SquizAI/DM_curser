@@ -18,6 +18,14 @@ from render_optimization import memory_optimize, optimize_dataframe, apply_strea
 apply_streamlit_optimizations()
 log_memory_usage("App startup")
 
+# Initialize key variables to prevent NameError
+uploaded_file = None
+sample_data_requested = False
+use_polars = False
+use_cache = True
+use_sample_subset = False
+sample_size = 10
+
 import pandas as pd
 import numpy as np
 import polars as pl
@@ -75,6 +83,10 @@ if 'show_loader_animation' not in st.session_state:
     st.session_state.show_loader_animation = False
 if 'data_loading_started' not in st.session_state:
     st.session_state.data_loading_started = False
+if 'last_clicked_button' not in st.session_state:
+    st.session_state.last_clicked_button = None
+if 'uploaded_file_path' not in st.session_state:
+    st.session_state.uploaded_file_path = None
 
 # Add a custom theme and styling for better UI
 st.markdown("""
@@ -347,8 +359,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Data loading section with tabs for better organization
-st.markdown('<div class="section-header">📥 Data Input</div>', unsafe_allow_html=True)
-
 data_tabs = st.tabs(["Upload Data", "Use Sample Data", "Data Preview"])
 
 # Add a spinner and progress bar for loading visualization
@@ -371,24 +381,27 @@ if st.session_state.show_loader_animation:
             import_utils_when_needed()
             st.session_state.data_loading_started = True
     
-    # Handle file upload loading
-    if uploaded_file is not None and not st.session_state.data_loaded:
+    # Process uploaded file if it exists
+    if st.session_state.last_clicked_button == "Load Uploaded Data" and not st.session_state.data_loaded:
         try:
             with st.spinner("Processing uploaded data..."):
                 start_time = time.time()
                 
+                # Get the file from session state
+                file = st.session_state.uploaded_file
+                
                 # Use Polars if selected
-                if 'use_polars' in locals() and use_polars:
+                if st.session_state.get('use_polars', False):
                     # Import the specific function for Polars
                     from utils.performance import convert_pandas_to_polars
                     
                     # Load with pandas first
-                    df, basket_encoded = load_and_prep_data(file=uploaded_file)
+                    df, basket_encoded = load_and_prep_data(file=file)
                     
                     # Then convert to polars for faster processing
                     df = convert_pandas_to_polars(df)
                 else:
-                    df, basket_encoded = load_and_prep_data(file=uploaded_file)
+                    df, basket_encoded = load_and_prep_data(file=file)
                 
                 st.session_state.df = df
                 st.session_state.basket_encoded = basket_encoded
@@ -401,7 +414,7 @@ if st.session_state.show_loader_animation:
             st.error(f"Error loading data: {str(e)}")
     
     # Handle sample data loading
-    elif 'Load Sample Data' in st.session_state.last_clicked_button and not st.session_state.data_loaded:
+    elif st.session_state.last_clicked_button == "Load Sample Data" and not st.session_state.data_loaded:
         try:
             with st.spinner("Loading sample data..."):
                 start_time = time.time()
@@ -430,9 +443,10 @@ if st.session_state.show_loader_animation:
                 
                 if os.path.exists(sample_data_path):
                     # Use subset if requested
-                    if 'use_sample_subset' in locals() and use_sample_subset and 'sample_size' in locals() and sample_size:
-                        st.info(f"Loading {sample_size}% of the data for faster processing")
-                        df, basket_encoded = load_and_prep_data(file_path=sample_data_path, sample_percentage=sample_size)
+                    if st.session_state.get('use_sample_subset', False):
+                        sample_pct = st.session_state.get('sample_size', 10)
+                        st.info(f"Loading {sample_pct}% of the data for faster processing")
+                        df, basket_encoded = load_and_prep_data(file_path=sample_data_path, sample_percentage=sample_pct)
                     else:
                         df, basket_encoded = load_and_prep_data(file_path=sample_data_path)
                     
@@ -460,22 +474,31 @@ with data_tabs[0]:  # Upload Data tab
     st.markdown('<div class="parameter-section">', unsafe_allow_html=True)
     uploaded_file = st.file_uploader("Upload your transaction data (CSV or Excel)", type=["csv", "xlsx", "xls"])
     
+    # Store in session state when changed
+    if uploaded_file is not None:
+        st.session_state.uploaded_file = uploaded_file
+    
     st.info("💡 Tip: Loading large files may take some time. Consider using a CSV file instead of Excel for faster processing.")
     
     if uploaded_file is not None:
         st.info(f"File '{uploaded_file.name}' ready to load")
         
-        # Add load options
-        use_cache = st.checkbox("Use cached data if available", value=True,
+        # Add load options and store in session state
+        use_cache = st.checkbox("Use cached data if available", value=True, 
                                help="Reuse previously loaded data to speed up processing")
+        st.session_state.use_cache = use_cache
+        
         use_polars = st.checkbox("Use Polars instead of Pandas (faster)", value=True,
                                 help="Polars is a faster data processing library that can speed up data loading")
+        st.session_state.use_polars = use_polars
         
         # Add a button to load the data
         if st.button("Load Uploaded Data"):
-            # Set the loader animation flag
+            # Set the loader animation flag and store what button was clicked
             st.session_state.show_loader_animation = True
+            st.session_state.last_clicked_button = "Load Uploaded Data"
             st.rerun()  # Trigger a rerun to show animation
+    st.markdown('</div>', unsafe_allow_html=True)
             
 with data_tabs[1]:  # Sample Data tab
     st.markdown('<div class="parameter-section">', unsafe_allow_html=True)
@@ -486,21 +509,28 @@ with data_tabs[1]:  # Sample Data tab
     </div>
     """, unsafe_allow_html=True)
     
-    # Add load options
+    # Add load options and store in session state
     use_cache = st.checkbox("Use cached data if available (faster)", value=True,
-                           help="Reuse previously loaded data to speed up processing")
+                           help="Reuse previously loaded data to speed up processing", key="sample_use_cache")
+    st.session_state.use_cache = use_cache
+    
     use_sample_subset = st.checkbox("Use smaller sample (much faster)", value=True, 
                                    help="Load only a subset of the data for faster processing")
-    sample_size = None
+    st.session_state.use_sample_subset = use_sample_subset
+    
+    sample_size = 10
     if use_sample_subset:
         sample_size = st.slider("Sample size (% of full data)", 1, 50, 10, 
                                help="Smaller samples load much faster but may affect analysis quality")
+        st.session_state.sample_size = sample_size
     
     # Add a button to load sample data
     if st.button("Load Sample Data"):
-        # Set the loader animation flag
+        # Set the loader animation flag and store what button was clicked
         st.session_state.show_loader_animation = True
+        st.session_state.last_clicked_button = "Load Sample Data"
         st.rerun()  # Trigger a rerun to show animation
+    st.markdown('</div>', unsafe_allow_html=True)
 
 with data_tabs[2]:  # Data Preview tab
     if st.session_state.df is not None:
