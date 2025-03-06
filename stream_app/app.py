@@ -30,7 +30,7 @@ gc.enable()
 pd.options.mode.chained_assignment = None  # default='warn'
 
 # Set lower precision for numeric columns to reduce memory
-pd.set_option('precision', 3)
+pd.set_option('display.precision', 3)  # Use fully qualified name to avoid ambiguity
 
 # Function to safely prepare DataFrames for Streamlit display
 def safe_display_df(df):
