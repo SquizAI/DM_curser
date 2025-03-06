@@ -40,23 +40,41 @@ import sys
 # Add utils directory to sys.path to allow importing modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Import utility modules
-from utils.data_loader import load_and_prep_data, create_time_based_datasets, segment_customers
-from utils.rule_mining import get_rules, process_rules_batch, analyze_rules_over_time, prune_redundant_rules, detect_insights, mine_rules_by_segment
-from utils.visualizations import (
-    create_rule_scatterplot, create_3d_rule_visualization, create_rule_network, 
-    create_item_frequency_chart, create_metric_distribution_plots, visualize_rules_over_time,
-    create_top_rules_table
-)
-from utils.insights import (
-    generate_business_insights, create_segment_recommendations, 
-    identify_cross_sell_opportunities, create_executive_summary
-)
-from utils.reporting import generate_pdf_report
-from utils.performance import (
-    profile_memory_usage, time_function, convert_pandas_to_polars,
-    convert_polars_to_pandas, optimize_pandas_dtypes, optimize_streamlit_performance
-)
+# Import utility modules lazily to improve startup time
+# This defers module imports until they're actually needed
+def import_utils_when_needed():
+    # Create global variables for the modules
+    global load_and_prep_data, create_time_based_datasets, segment_customers
+    global get_rules, process_rules_batch, analyze_rules_over_time, prune_redundant_rules, detect_insights, mine_rules_by_segment
+    global create_rule_scatterplot, create_3d_rule_visualization, create_rule_network, create_item_frequency_chart, create_metric_distribution_plots, visualize_rules_over_time, create_top_rules_table
+    global generate_business_insights, create_segment_recommendations, identify_cross_sell_opportunities, create_executive_summary
+    global generate_pdf_report
+    global profile_memory_usage, time_function, convert_pandas_to_polars
+    
+    # Import utility modules
+    from utils.data_loader import load_and_prep_data, create_time_based_datasets, segment_customers
+    from utils.rule_mining import get_rules, process_rules_batch, analyze_rules_over_time, prune_redundant_rules, detect_insights, mine_rules_by_segment
+    from utils.visualizations import (
+        create_rule_scatterplot, create_3d_rule_visualization, create_rule_network, 
+        create_item_frequency_chart, create_metric_distribution_plots, visualize_rules_over_time,
+        create_top_rules_table
+    )
+    from utils.insights import (
+        generate_business_insights, create_segment_recommendations, 
+        identify_cross_sell_opportunities, create_executive_summary
+    )
+    from utils.reporting import generate_pdf_report
+    from utils.performance import (
+        profile_memory_usage, time_function, convert_pandas_to_polars
+    )
+
+# Initialize session state
+if 'data_loaded' not in st.session_state:
+    st.session_state.data_loaded = False
+if 'show_loader_animation' not in st.session_state:
+    st.session_state.show_loader_animation = False
+if 'data_loading_started' not in st.session_state:
+    st.session_state.data_loading_started = False
 
 # Add a custom theme and styling for better UI
 st.markdown("""
@@ -333,32 +351,132 @@ st.markdown('<div class="section-header">📥 Data Input</div>', unsafe_allow_ht
 
 data_tabs = st.tabs(["Upload Data", "Use Sample Data", "Data Preview"])
 
+# Add a spinner and progress bar for loading visualization
+if st.session_state.show_loader_animation:
+    spinner_col, progress_col = st.columns([1, 3])
+    with spinner_col:
+        st.spinner("Loading data...")
+    with progress_col:
+        progress_bar = st.progress(0)
+        for i in range(100):
+            time.sleep(0.01)  # Simulate progress
+            progress_bar.progress(i + 1)
+    
+    # Clear the animation after it completes
+    st.session_state.show_loader_animation = False
+    
+    # Import the heavy modules only when needed
+    if not st.session_state.data_loading_started:
+        with st.spinner("Initializing modules..."):
+            import_utils_when_needed()
+            st.session_state.data_loading_started = True
+    
+    # Handle file upload loading
+    if uploaded_file is not None and not st.session_state.data_loaded:
+        try:
+            with st.spinner("Processing uploaded data..."):
+                start_time = time.time()
+                
+                # Use Polars if selected
+                if 'use_polars' in locals() and use_polars:
+                    # Import the specific function for Polars
+                    from utils.performance import convert_pandas_to_polars
+                    
+                    # Load with pandas first
+                    df, basket_encoded = load_and_prep_data(file=uploaded_file)
+                    
+                    # Then convert to polars for faster processing
+                    df = convert_pandas_to_polars(df)
+                else:
+                    df, basket_encoded = load_and_prep_data(file=uploaded_file)
+                
+                st.session_state.df = df
+                st.session_state.basket_encoded = basket_encoded
+                st.session_state.processing_time['data_loading'] = time.time() - start_time
+                st.session_state.data_loaded = True
+                
+                st.success(f"✅ Successfully loaded data with {df.shape[0]} transactions and {df.shape[1]} columns")
+                
+        except Exception as e:
+            st.error(f"Error loading data: {str(e)}")
+    
+    # Handle sample data loading
+    elif 'Load Sample Data' in st.session_state.last_clicked_button and not st.session_state.data_loaded:
+        try:
+            with st.spinner("Loading sample data..."):
+                start_time = time.time()
+                
+                # Load sample data
+                sample_data_path = os.path.join(os.path.dirname(__file__), "Online Retail.xlsx")
+                
+                # Check if we have an optimized version of the file
+                from utils.data_converter import get_optimized_file_path, convert_excel_to_parquet
+                
+                # Convert to parquet if not already done
+                if sample_data_path.endswith('.xlsx') and os.path.exists(sample_data_path):
+                    try:
+                        # First check if faster version exists
+                        optimized_path = get_optimized_file_path(sample_data_path)
+                        
+                        # If it's still the Excel file, convert it
+                        if optimized_path == sample_data_path:
+                            st.info("Converting Excel to Parquet for faster future loading...")
+                            optimized_path = convert_excel_to_parquet(sample_data_path)
+                        
+                        # Use the optimized path
+                        sample_data_path = optimized_path
+                    except Exception as e:
+                        st.warning(f"Could not optimize file format: {e}")
+                
+                if os.path.exists(sample_data_path):
+                    # Use subset if requested
+                    if 'use_sample_subset' in locals() and use_sample_subset and 'sample_size' in locals() and sample_size:
+                        st.info(f"Loading {sample_size}% of the data for faster processing")
+                        df, basket_encoded = load_and_prep_data(file_path=sample_data_path, sample_percentage=sample_size)
+                    else:
+                        df, basket_encoded = load_and_prep_data(file_path=sample_data_path)
+                    
+                    st.session_state.df = df
+                    st.session_state.basket_encoded = basket_encoded
+                    st.session_state.processing_time['data_loading'] = time.time() - start_time
+                    st.session_state.data_loaded = True
+                    
+                    st.success(f"✅ Successfully loaded sample data with {df.shape[0]} transactions")
+                else:
+                    st.error(f"Sample data file not found at {sample_data_path}. Please upload a file instead.")
+            
+        except Exception as e:
+            st.error(f"Error loading sample data: {str(e)}")
+
+# Store the last clicked button for state management
+for button in ['Load Uploaded Data', 'Load Sample Data']:
+    if button not in st.session_state:
+        st.session_state[button] = False
+    
+    if st.session_state.get(button, False):
+        st.session_state.last_clicked_button = button
+
 with data_tabs[0]:  # Upload Data tab
     st.markdown('<div class="parameter-section">', unsafe_allow_html=True)
     uploaded_file = st.file_uploader("Upload your transaction data (CSV or Excel)", type=["csv", "xlsx", "xls"])
     
+    st.info("💡 Tip: Loading large files may take some time. Consider using a CSV file instead of Excel for faster processing.")
+    
     if uploaded_file is not None:
         st.info(f"File '{uploaded_file.name}' ready to load")
         
+        # Add load options
+        use_cache = st.checkbox("Use cached data if available", value=True,
+                               help="Reuse previously loaded data to speed up processing")
+        use_polars = st.checkbox("Use Polars instead of Pandas (faster)", value=True,
+                                help="Polars is a faster data processing library that can speed up data loading")
+        
         # Add a button to load the data
         if st.button("Load Uploaded Data"):
-            with st.spinner("Processing uploaded data..."):
-                try:
-                    start_time = time.time()
-                    df, basket_encoded = load_and_prep_data(file=uploaded_file)
-                    st.session_state.df = df
-                    st.session_state.basket_encoded = basket_encoded
-                    st.session_state.processing_time['data_loading'] = time.time() - start_time
-                    
-                    st.markdown(f"""
-                    <div class="success-message">
-                        ✅ Successfully loaded data with {df.shape[0]} transactions and {df.shape[1]} columns
-                    </div>
-                    """, unsafe_allow_html=True)
-                except Exception as e:
-                    st.error(f"Error loading data: {str(e)}")
-    st.markdown('</div>', unsafe_allow_html=True)
-
+            # Set the loader animation flag
+            st.session_state.show_loader_animation = True
+            st.rerun()  # Trigger a rerun to show animation
+            
 with data_tabs[1]:  # Sample Data tab
     st.markdown('<div class="parameter-section">', unsafe_allow_html=True)
     st.markdown("""
@@ -368,29 +486,21 @@ with data_tabs[1]:  # Sample Data tab
     </div>
     """, unsafe_allow_html=True)
     
+    # Add load options
+    use_cache = st.checkbox("Use cached data if available (faster)", value=True,
+                           help="Reuse previously loaded data to speed up processing")
+    use_sample_subset = st.checkbox("Use smaller sample (much faster)", value=True, 
+                                   help="Load only a subset of the data for faster processing")
+    sample_size = None
+    if use_sample_subset:
+        sample_size = st.slider("Sample size (% of full data)", 1, 50, 10, 
+                               help="Smaller samples load much faster but may affect analysis quality")
+    
     # Add a button to load sample data
     if st.button("Load Sample Data"):
-        with st.spinner("Loading sample data..."):
-            try:
-                start_time = time.time()
-                # Load sample data
-                sample_data_path = os.path.join(os.path.dirname(__file__), "Online Retail.xlsx")
-                if os.path.exists(sample_data_path):
-                    df, basket_encoded = load_and_prep_data(file_path=sample_data_path)
-                    st.session_state.df = df
-                    st.session_state.basket_encoded = basket_encoded
-                    st.session_state.processing_time['data_loading'] = time.time() - start_time
-                    
-                    st.markdown(f"""
-                    <div class="success-message">
-                        ✅ Successfully loaded sample data with {df.shape[0]} transactions
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.error(f"Sample data file not found at {sample_data_path}. Please upload a file instead.")
-            except Exception as e:
-                st.error(f"Error loading sample data: {str(e)}")
-    st.markdown('</div>', unsafe_allow_html=True)
+        # Set the loader animation flag
+        st.session_state.show_loader_animation = True
+        st.rerun()  # Trigger a rerun to show animation
 
 with data_tabs[2]:  # Data Preview tab
     if st.session_state.df is not None:

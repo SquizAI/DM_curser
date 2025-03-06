@@ -16,7 +16,8 @@ from render_optimization import memory_optimize, optimize_dataframe
 @memory_optimize
 def load_and_prep_data(file_path: Optional[str] = None, 
                        file = None,
-                       dataframe: Optional[pd.DataFrame] = None) -> Tuple[pd.DataFrame, Set]:
+                       dataframe: Optional[pd.DataFrame] = None,
+                       sample_percentage: Optional[int] = None) -> Tuple[pd.DataFrame, Set]:
     """
     Load and preprocess transaction data from a file or uploaded file
     
@@ -24,6 +25,7 @@ def load_and_prep_data(file_path: Optional[str] = None,
         file_path: Path to the file
         file: Uploaded file object
         dataframe: Existing DataFrame
+        sample_percentage: Percentage of data to sample (1-100)
         
     Returns:
         Tuple of (processed DataFrame, encoded basket)
@@ -38,6 +40,8 @@ def load_and_prep_data(file_path: Optional[str] = None,
                 if hasattr(file, 'name'):
                     if file.name.endswith('.csv'):
                         df = pd.read_csv(file)
+                    elif file.name.endswith('.parquet'):
+                        df = pd.read_parquet(file)
                     elif file.name.endswith(('.xlsx', '.xls')):
                         # For Excel files, use chunk reading for better memory usage
                         try:
@@ -111,6 +115,8 @@ def load_and_prep_data(file_path: Optional[str] = None,
             # Load from file path
             if file_path.endswith('.csv'):
                 df = pd.read_csv(file_path)
+            elif file_path.endswith('.parquet'):
+                df = pd.read_parquet(file_path)
             elif file_path.endswith(('.xlsx', '.xls')):
                 # Use same chunking approach for file paths
                 try:
@@ -163,6 +169,17 @@ def load_and_prep_data(file_path: Optional[str] = None,
         else:
             st.error("No data source provided")
             return pd.DataFrame(), set()
+        
+        # Apply sampling if requested
+        if sample_percentage is not None and 1 <= sample_percentage <= 100:
+            if sample_percentage < 100:
+                # Calculate sample size
+                sample_size = int(len(df) * (sample_percentage / 100))
+                
+                # Sample the dataframe
+                if len(df) > sample_size:
+                    print(f"Sampling {sample_percentage}% of data ({sample_size} rows)")
+                    df = df.sample(n=sample_size, random_state=42)
         
         # Apply memory optimization to the DataFrame
         df = optimize_dataframe(df)
