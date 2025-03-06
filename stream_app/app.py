@@ -9,7 +9,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import seaborn as sns
-from mlxtend.frequent_patterns import apriori
+from mlxtend.frequent_patterns import apriori, fpgrowth
 from mlxtend.frequent_patterns import association_rules
 from mlxtend.preprocessing import TransactionEncoder
 import json
@@ -19,114 +19,150 @@ from io import BytesIO
 from datetime import datetime
 import gc
 
-# Define the rule mining functions directly in app.py to prevent import issues
-# This ensures the function is always available
-
-@st.cache_data
-def get_rules(basket_encoded: Union[pd.DataFrame, Dict[str, Set]], 
-              min_support: float = 0.01, 
-              min_confidence: float = 0.3, 
-              min_lift: float = 1.0,
-              algorithm: str = 'apriori',
-              max_len: Optional[int] = None) -> pd.DataFrame:
-    """
-    Generate association rules using specified algorithm with enhanced performance.
-    
-    Args:
-        basket_encoded: Binary encoded transaction data or dictionary of transaction sets
-        min_support: Minimum support threshold
-        min_confidence: Minimum confidence threshold
-        min_lift: Minimum lift threshold
-        algorithm: Algorithm to use ('apriori' or 'fpgrowth')
-        max_len: Maximum length of itemsets
-        
-    Returns:
-        DataFrame of association rules
-    """
-    # Convert dictionary to proper format if needed
-    if isinstance(basket_encoded, dict):
-        # Extract transaction lists from the dictionary
-        transactions = list(basket_encoded.values())
-        
-        # Ensure all items in transactions are strings to prevent type comparison errors
-        str_transactions = []
-        for transaction in transactions:
-            # Convert each item in the transaction to a string
-            str_transaction = [str(item) for item in transaction]
-            str_transactions.append(str_transaction)
-        
-        # Use TransactionEncoder to convert to binary format
-        te = TransactionEncoder()
-        te_ary = te.fit_transform(str_transactions)
-        basket_df = pd.DataFrame(te_ary, columns=te.columns_)
-    else:
-        # Already a DataFrame
-        basket_df = basket_encoded
-    
-    # Apply selected algorithm
-    if algorithm == 'fpgrowth':
-        frequent_itemsets = fpgrowth(basket_df, 
-                                    min_support=min_support, 
-                                    use_colnames=True,
-                                    max_len=max_len)
-    else:  # default to apriori
-        frequent_itemsets = apriori(basket_df, 
-                                  min_support=min_support, 
-                                  use_colnames=True,
-                                  max_len=max_len)
-    
-    # If no frequent itemsets found, return empty DataFrame
-    if frequent_itemsets.empty:
-        return pd.DataFrame(columns=['antecedents', 'consequents', 'support', 
-                                   'confidence', 'lift', 'leverage', 'conviction'])
-    
-    # Generate association rules
-    rules = association_rules(frequent_itemsets, 
-                             metric="confidence", 
-                             min_threshold=min_confidence)
-    
-    # Filter by minimum lift
-    rules = rules[rules['lift'] >= min_lift]
-    
-    return rules
-
-def prune_redundant_rules(rules: pd.DataFrame) -> pd.DataFrame:
-    """
-    Remove redundant or less valuable rules
-    
-    Args:
-        rules: Association rules DataFrame
-        
-    Returns:
-        Pruned rules DataFrame
-    """
-    if rules.empty:
-        return rules
-    
-    # Sort by lift (higher is better)
-    sorted_rules = rules.sort_values('lift', ascending=False)
-    
-    # Identify rules with same consequent
-    pruned_rules = []
-    seen_consequents = set()
-    
-    for _, rule in sorted_rules.iterrows():
-        # Convert frozenset to tuple for hashability
-        consequent = tuple(rule['consequents'])
-        antecedent = tuple(rule['antecedents'])
-        
-        # Simple pruning: if we've seen this exact consequent before with higher lift, skip
-        if consequent in seen_consequents:
-            continue
-            
-        pruned_rules.append(rule)
-        seen_consequents.add(consequent)
-    
-    return pd.DataFrame(pruned_rules)
-
 # Print debugging information
 print(f"Python version: {sys.version}")
 print(f"Running app.py from: {__file__}")
+
+# Add utils directory to sys.path to allow importing modules
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'utils'))
+
+print(f"Python path: {sys.path}")
+
+# Define the import_utils_when_needed function first
+def import_utils_when_needed():
+    # Create global variables for the modules
+    global load_and_prep_data, create_time_based_datasets, segment_customers
+    global get_rules, process_rules_batch, analyze_rules_over_time, prune_redundant_rules, detect_insights, mine_rules_by_segment
+    global create_rule_scatterplot, create_3d_rule_visualization, create_rule_network, create_item_frequency_chart, create_metric_distribution_plots, visualize_rules_over_time, create_top_rules_table
+    global generate_business_insights, create_segment_recommendations, identify_cross_sell_opportunities, create_executive_summary
+    global generate_pdf_report
+    global profile_memory_usage, time_function, convert_pandas_to_polars
+    
+    # Import utility modules
+    print("Importing utility modules...")
+    try:
+        from utils.data_loader import load_and_prep_data, create_time_based_datasets, segment_customers
+        print("Imported data_loader")
+    except Exception as e:
+        print(f"Error importing data_loader: {e}")
+    
+    try:
+        from utils.rule_mining import get_rules, process_rules_batch, analyze_rules_over_time, prune_redundant_rules, detect_insights, mine_rules_by_segment
+        print("Imported rule_mining")
+    except Exception as e:
+        print(f"Error importing rule_mining: {e}")
+        
+        # Provide backup definition for get_rules
+        @st.cache_data
+        def get_rules(basket_encoded, min_support=0.01, min_confidence=0.3, min_lift=1.0, algorithm='apriori', max_len=None):
+            print("Using backup get_rules function")
+            # Convert dictionary to proper format if needed
+            if isinstance(basket_encoded, dict):
+                # Extract transaction lists from the dictionary
+                transactions = list(basket_encoded.values())
+                
+                # Ensure all items in transactions are strings to prevent type comparison errors
+                str_transactions = []
+                for transaction in transactions:
+                    # Convert each item in the transaction to a string
+                    str_transaction = [str(item) for item in transaction]
+                    str_transactions.append(str_transaction)
+                
+                # Use TransactionEncoder to convert to binary format
+                te = TransactionEncoder()
+                te_ary = te.fit_transform(str_transactions)
+                basket_df = pd.DataFrame(te_ary, columns=te.columns_)
+            else:
+                # Already a DataFrame
+                basket_df = basket_encoded
+            
+            # Apply selected algorithm
+            if algorithm == 'fpgrowth':
+                frequent_itemsets = fpgrowth(basket_df, 
+                                          min_support=min_support, 
+                                          use_colnames=True,
+                                          max_len=max_len)
+            else:  # default to apriori
+                frequent_itemsets = apriori(basket_df, 
+                                      min_support=min_support, 
+                                      use_colnames=True,
+                                      max_len=max_len)
+            
+            # If no frequent itemsets found, return empty DataFrame
+            if frequent_itemsets.empty:
+                return pd.DataFrame(columns=['antecedents', 'consequents', 'support', 
+                                         'confidence', 'lift', 'leverage', 'conviction'])
+            
+            # Generate association rules
+            rules = association_rules(frequent_itemsets, 
+                                   metric="confidence", 
+                                   min_threshold=min_confidence)
+            
+            # Filter by minimum lift
+            rules = rules[rules['lift'] >= min_lift]
+            
+            return rules
+            
+        def prune_redundant_rules(rules):
+            if rules.empty:
+                return rules
+            
+            # Sort by lift (higher is better)
+            sorted_rules = rules.sort_values('lift', ascending=False)
+            
+            # Identify rules with same consequent
+            pruned_rules = []
+            seen_consequents = set()
+            
+            for _, rule in sorted_rules.iterrows():
+                # Convert frozenset to tuple for hashability
+                consequent = tuple(rule['consequents'])
+                
+                # Simple pruning: if we've seen this exact consequent before with higher lift, skip
+                if consequent in seen_consequents:
+                    continue
+                    
+                pruned_rules.append(rule)
+                seen_consequents.add(consequent)
+            
+            return pd.DataFrame(pruned_rules)
+    
+    try:
+        from utils.visualizations import (
+            create_rule_scatterplot, create_3d_rule_visualization, create_rule_network, 
+            create_item_frequency_chart, create_metric_distribution_plots, visualize_rules_over_time,
+            create_top_rules_table
+        )
+        print("Imported visualizations")
+    except Exception as e:
+        print(f"Error importing visualizations: {e}")
+    
+    try:
+        from utils.insights import (
+            generate_business_insights, create_segment_recommendations, 
+            identify_cross_sell_opportunities, create_executive_summary
+        )
+        print("Imported insights")
+    except Exception as e:
+        print(f"Error importing insights: {e}")
+    
+    try:
+        from utils.reporting import generate_pdf_report
+        print("Imported reporting")
+    except Exception as e:
+        print(f"Error importing reporting: {e}")
+    
+    try:
+        from utils.performance import (
+            profile_memory_usage, time_function, convert_pandas_to_polars
+        )
+        print("Imported performance")
+    except Exception as e:
+        print(f"Error importing performance: {e}")
+
+# Call import_utils_when_needed immediately to load all modules
+import_utils_when_needed()
 
 # Set page config - must be the first Streamlit command
 st.set_page_config(
@@ -208,33 +244,6 @@ except Exception as e:
         print(msg)
     def apply_streamlit_optimizations():
         pass
-
-# Import utility modules lazily to improve startup time
-def import_utils_when_needed():
-    # Create global variables for the modules
-    global load_and_prep_data, create_time_based_datasets, segment_customers
-    global get_rules, process_rules_batch, analyze_rules_over_time, prune_redundant_rules, detect_insights, mine_rules_by_segment
-    global create_rule_scatterplot, create_3d_rule_visualization, create_rule_network, create_item_frequency_chart, create_metric_distribution_plots, visualize_rules_over_time, create_top_rules_table
-    global generate_business_insights, create_segment_recommendations, identify_cross_sell_opportunities, create_executive_summary
-    global generate_pdf_report
-    global profile_memory_usage, time_function, convert_pandas_to_polars
-    
-    # Import utility modules
-    from utils.data_loader import load_and_prep_data, create_time_based_datasets, segment_customers
-    from utils.rule_mining import get_rules, process_rules_batch, analyze_rules_over_time, prune_redundant_rules, detect_insights, mine_rules_by_segment
-    from utils.visualizations import (
-        create_rule_scatterplot, create_3d_rule_visualization, create_rule_network, 
-        create_item_frequency_chart, create_metric_distribution_plots, visualize_rules_over_time,
-        create_top_rules_table
-    )
-    from utils.insights import (
-        generate_business_insights, create_segment_recommendations, 
-        identify_cross_sell_opportunities, create_executive_summary
-    )
-    from utils.reporting import generate_pdf_report
-    from utils.performance import (
-        profile_memory_usage, time_function, convert_pandas_to_polars
-    )
 
 # Initialize session state
 if 'data_loaded' not in st.session_state:
